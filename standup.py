@@ -47,7 +47,7 @@ DEFAULT_CONFIG = {
     "snooze_minutes": 5,      # snooze button duration
     "sound_enabled": True,    # play a chime when a popup fires
     "transparency": 0.90,     # popup opacity 0.5 (very see-through) - 1.0 (solid)
-    "autostart": False,       # launch automatically when Windows starts
+    "autostart": True,        # launch automatically at login (default ON)
     "stay_on_top": False,     # keep the little control window above others
     "stats": {"date": "", "stands": 0},
 }
@@ -263,6 +263,16 @@ class StandUpApp:
         self.config = DEFAULT_CONFIG.copy()
         self.config.update(_read_json(CONFIG_FILE, {}))
         self.config.setdefault("stats", {"date": "", "stands": 0})
+
+        # Auto-start defaults ON. Whenever it's enabled, make sure the per-user
+        # startup entry actually exists (idempotent + self-healing). Turning it
+        # off in Settings removes the entry; we never recreate it while off.
+        if self.config.get("autostart") and platform.system() == "Windows":
+            try:
+                ok, _msg = set_autostart(True)
+                self.config["autostart"] = bool(ok)
+            except Exception:
+                pass
 
         self.stand_quotes = _read_json(STAND_FILE, None) or list(DEFAULT_STAND_QUOTES)
         self.sit_quotes = _read_json(SIT_FILE, None) or list(DEFAULT_SIT_QUOTES)

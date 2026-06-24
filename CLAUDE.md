@@ -66,8 +66,12 @@ that click starts the next phase's countdown.
   (`CONFIG_DIR`). Defaults (`DEFAULT_CONFIG`, `DEFAULT_STAND_QUOTES`,
   `DEFAULT_SIT_QUOTES`) are written on first run. Helpers: `_read_json` /
   `_write_json`.
-- **Auto-start:** `set_autostart(enable)` writes/removes
-  `StandUpReminder.bat` in the per-user Startup folder (no admin, no registry).
+- **Auto-start:** ON by default (`DEFAULT_CONFIG["autostart"] = True`).
+  `set_autostart(enable)` writes/removes `StandUpReminder.bat` in the per-user
+  Startup folder (no admin, no registry). `__init__` self-heals: if the setting
+  is on it re-creates the startup entry each launch; it never recreates it while
+  off (turning it off in Settings removes it). `install.py` also enables it via
+  `enable_autostart()` so it's on even before the first launch.
 - **Window icon:** `_build_ui` calls `iconbitmap("standup.ico")` if present.
 
 ## How to run & test

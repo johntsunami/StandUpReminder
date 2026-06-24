@@ -152,6 +152,21 @@ def create_bat(desktop, target, script, workdir):
     return bat
 
 
+def enable_autostart():
+    """Turn on launch-at-login (the app defaults to ON). Reuses standup.py's
+    helper so there's a single source of truth, and records it in the config."""
+    try:
+        sys.path.insert(0, HERE)
+        import standup
+        ok, msg = standup.set_autostart(True)
+        cfg = standup._read_json(standup.CONFIG_FILE, {})
+        cfg["autostart"] = bool(ok)
+        standup._write_json(standup.CONFIG_FILE, cfg)
+        return ok, msg
+    except Exception as exc:
+        return False, str(exc)
+
+
 def main():
     if sys.platform != "win32":
         print("This installer creates a Windows desktop shortcut. On macOS/Linux,"
@@ -169,19 +184,31 @@ def main():
     desktop = desktop_dir()
     lnk = os.path.join(desktop, SHORTCUT_NAME + ".lnk")
 
+    made = False
     for name, fn in (("native COM", lambda: create_lnk_ctypes(lnk, target, args, workdir, icon)),
                      ("PowerShell", lambda: create_lnk_powershell(lnk, target, args, workdir, icon))):
         try:
             if fn():
                 print("Created desktop shortcut via %s:\n  %s" % (name, lnk))
-                return 0
+                made = True
+                break
         except Exception as exc:
             print("(%s method unavailable: %s)" % (name, exc))
 
-    bat = create_bat(desktop, target, SCRIPT, workdir)
-    print("Created a launcher on your Desktop:\n  %s" % bat)
-    print("(Could not make a .lnk with a custom icon; the .bat works the same way.)")
+    if not made:
+        bat = create_bat(desktop, target, SCRIPT, workdir)
+        print("Created a launcher on your Desktop:\n  %s" % bat)
+        print("(Could not make a .lnk with a custom icon; the .bat works the same way.)")
+
+    _report_autostart()
     return 0
+
+
+def _report_autostart():
+    ok, msg = enable_autostart()
+    print(("Auto-start at login: ENABLED." if ok
+           else "Auto-start could not be enabled (%s)." % msg)
+          + " You can change this in the app under Settings.")
 
 
 if __name__ == "__main__":

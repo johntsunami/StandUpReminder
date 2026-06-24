@@ -61,7 +61,8 @@ popup is showing** — so nothing piles up if you step away from your desk.
 - **Sit time** before STAND UP (default **45 min**)
 - **Stand time** before SIT DOWN (default **5 min**)
 - **Sound** on/off, **popup transparency**, keep the control window on top
-- **Start automatically at login** (per-user, no admin rights needed)
+- **Start automatically at login** — **ON by default** (per-user, no admin rights
+  needed). Uncheck it here if you ever want to disable it on a particular machine.
 - **Test popup** buttons — press them to preview STAND UP / SIT DOWN as many
   times as you like, without affecting your real timer
 
