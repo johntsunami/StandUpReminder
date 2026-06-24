@@ -67,6 +67,10 @@ popup is showing** — so nothing piles up if you step away from your desk.
   keyboard for a couple of minutes, so a break never counts while you're not there.
 - **Pause during calls** (default ON) — the timer holds whenever your microphone
   or camera is in use (Teams, Zoom, etc.), so it won't tell you to move mid-meeting.
+- **Restart cycle if away/locked over (min)** (default **30**) — if your screen was
+  locked or asleep for at least this long, the timer **restarts when you log back
+  in** and the **next popup is STAND UP** (since you were probably already up and
+  moving while away). Counts time the PC spent fully asleep too.
 - **Sound** on/off, **popup transparency**, keep the control window on top.
 - **Start automatically at login** — **ON by default** (per-user, no admin rights
   needed). Uncheck it here if you ever want to disable it on a particular machine.

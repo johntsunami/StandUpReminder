@@ -21,6 +21,7 @@ import json
 import random
 import platform
 import datetime
+import time
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 
@@ -58,6 +59,7 @@ DEFAULT_CONFIG = {
     "startup_delay_minutes": 30,  # grace period after launch before the cycle begins
     "pause_when_away": True,  # pause while locked / screen asleep / idle
     "pause_in_call": True,    # pause while a call is using the mic or camera
+    "reset_after_away_minutes": 30,  # away/locked >= this -> restart cycle (next = STAND UP)
     "stats": {"date": "", "stands": 0},
 }
 
@@ -300,6 +302,8 @@ class StandUpApp:
         self.pending_mode = None                # mode to switch to after popup
         self.active_popup = None
         self.pause_reason = None                # set when locked / away / in a call
+        self.away_seconds = 0                   # how long we've been locked/away
+        self.last_tick = time.monotonic()       # to detect PC sleep (big time gaps)
 
         self._roll_stats_day()
         self._build_ui()
@@ -402,12 +406,37 @@ class StandUpApp:
                 return "in a call"
         return None
 
+    def _restart_after_long_away(self):
+        """A long lock/sleep counts as a movement break: start a fresh sit
+        period so the very next prompt is STAND UP."""
+        self.in_warmup = False
+        self.mode = "sit"
+        self.remaining = self.duration_for("sit")
+
     def _tick(self):
+        # Detect a big wall-clock jump (the PC was asleep/suspended while our
+        # 1-second loop was frozen) so that sleep also counts as "away" time.
+        now = time.monotonic()
+        gap = now - self.last_tick
+        self.last_tick = now
+        big_gap = int(gap) if gap > 90 else 0
+
         # The timer is frozen while a popup is showing, so nothing stacks up or
         # keeps firing if you've stepped away -- exactly one popup waits for you.
         if self.running and not self.popup_open and not self._popup_alive():
             self.pause_reason = self._should_pause()
-            if not self.pause_reason:
+            if big_gap:
+                self.away_seconds += big_gap          # time spent suspended/asleep
+
+            if self.pause_reason in ("screen locked", "away from desk"):
+                self.away_seconds += 1                # keep holding; accrue away time
+            elif self.pause_reason is None:
+                # Back at the desk. If we were away/locked long enough, assume the
+                # user was up and moving -> restart so the next popup is STAND UP.
+                threshold = max(1, int(self.config.get("reset_after_away_minutes", 30))) * 60
+                if self.away_seconds >= threshold:
+                    self._restart_after_long_away()
+                self.away_seconds = 0
                 self.remaining -= 1
                 if self.remaining <= 0:
                     if self.in_warmup:
@@ -418,6 +447,7 @@ class StandUpApp:
                     else:
                         nxt = "stand" if self.mode == "sit" else "sit"
                         self._fire_transition(nxt)
+            # else ("in a call"): just hold, without accruing away time
         self._refresh_display()
         self.root.after(1000, self._tick)
 
@@ -607,6 +637,7 @@ class StandUpApp:
         sound_v = tk.BooleanVar(value=self.config["sound_enabled"])
         away_v = tk.BooleanVar(value=self.config.get("pause_when_away", True))
         call_v = tk.BooleanVar(value=self.config.get("pause_in_call", True))
+        reset_v = tk.IntVar(value=self.config.get("reset_after_away_minutes", 30))
         topmost_v = tk.BooleanVar(value=self.config["stay_on_top"])
         auto_v = tk.BooleanVar(value=self.config["autostart"])
         trans_v = tk.DoubleVar(value=self.config["transparency"])
@@ -633,8 +664,10 @@ class StandUpApp:
         row(4, "Play sound on popup", check(sound_v))
         row(5, "Pause when locked / screen asleep", check(away_v))
         row(6, "Pause during calls (mic or camera in use)", check(call_v))
-        row(7, "Keep control window on top", check(topmost_v))
-        row(8, "Start automatically at login", check(auto_v))
+        row(7, "Restart cycle if away/locked over (min)",
+            tk.Spinbox(win, from_=1, to=240, textvariable=reset_v, width=6))
+        row(8, "Keep control window on top", check(topmost_v))
+        row(9, "Start automatically at login", check(auto_v))
 
         def save():
             self.config["sit_minutes"] = max(1, int(sit_v.get()))
@@ -643,6 +676,7 @@ class StandUpApp:
             self.config["sound_enabled"] = bool(sound_v.get())
             self.config["pause_when_away"] = bool(away_v.get())
             self.config["pause_in_call"] = bool(call_v.get())
+            self.config["reset_after_away_minutes"] = max(1, int(reset_v.get()))
             self.config["stay_on_top"] = bool(topmost_v.get())
             self.config["transparency"] = float(trans_v.get())
 
@@ -664,7 +698,7 @@ class StandUpApp:
 
         # --- live preview: press as many times as you like to test popups ----
         test = tk.Frame(win, bg="#1e1e2e")
-        test.grid(row=9, column=0, columnspan=2, pady=(12, 0))
+        test.grid(row=10, column=0, columnspan=2, pady=(12, 0))
         tk.Label(test, text="Test popup:", fg="#cdd6f4", bg="#1e1e2e",
                  font=("Segoe UI", 10)).pack(side="left", padx=(0, 8))
         tk.Button(test, text="STAND UP", width=11,
@@ -673,7 +707,7 @@ class StandUpApp:
                   command=lambda: self._show_popup("sit", preview=True)).pack(side="left", padx=3)
 
         tk.Button(win, text="Save", width=12, command=save).grid(
-            row=10, column=0, columnspan=2, pady=12)
+            row=11, column=0, columnspan=2, pady=12)
 
         win.update_idletasks()
         self._place_bottom_right(win, win.winfo_reqwidth() + 16,

@@ -88,6 +88,12 @@ that click starts the next phase's countdown.
 - **Warm-up:** `startup_delay_minutes` (default 30). On launch `in_warmup` is set
   and `remaining` is the delay; when it elapses, `_tick` switches to a normal sit
   cycle WITHOUT a popup. `reset()`/`skip()` end the warm-up immediately.
+- **Long-away restart:** `_tick` accumulates `away_seconds` while locked/away, and
+  also adds large wall-clock gaps (`time.monotonic()` jumps > 90s) so full PC
+  sleep counts even though the loop was frozen. When the user returns
+  (`pause_reason` becomes None), if `away_seconds >= reset_after_away_minutes*60`
+  (default 30) it calls `_restart_after_long_away()` → fresh sit cycle so the next
+  popup is STAND UP. "In a call" pauses do NOT accrue away time.
 - **Window placement:** `_place_bottom_right()` puts the control window and the
   Settings dialog in the lower-right corner (above the taskbar). The big STAND
   UP / SIT DOWN popup is still full-screen/centered.
