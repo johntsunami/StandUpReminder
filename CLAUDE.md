@@ -1,0 +1,135 @@
+# CLAUDE.md — handoff & developer guide
+
+This file tells Claude Code (or any developer) everything needed to continue
+working on **StandUp Reminder**. Read it first before changing anything.
+
+## What this app is
+
+A desktop reminder that alternates **STAND UP** and **SIT DOWN** prompts to help
+the user (chronic lumbar/sacral back pain) take pressure off their spine during
+desk work. When a phase timer ends, a popup shows a humorous line as big words
+floating over the screen; closing the popup = the user confirming they moved, and
+that click starts the next phase's countdown.
+
+## NON-NEGOTIABLE constraints (do not break these)
+
+1. **Standard library only. No `pip install`, ever.** The user runs this on a
+   locked-down corporate / Citrix / HIPAA work laptop that allows Python scripts
+   but may block package installs. Allowed modules: `tkinter`, `winsound`,
+   `json`, `os`, `sys`, `random`, `platform`, `datetime`, `ctypes`, `zlib`,
+   `struct`, `subprocess`. If you think you need a third-party package, find a
+   stdlib way instead.
+2. **Primary platform is Windows.** Degrade gracefully elsewhere (the code wraps
+   Windows-only bits — `winsound`, `-transparentcolor`, COM, startup folder — in
+   try/except), but Windows is what matters.
+3. **Keep it simple to install.** A non-technical user must be able to
+   double-click `setup.bat`. Don't add build steps.
+
+## File map
+
+| File | Purpose | Notes |
+|------|---------|-------|
+| `standup.py` | The whole app | Single file, `StandUpApp` class + `set_autostart()` + `main()` |
+| `setup.bat` | One-click install + launch | Checks Python, runs `install.py`, starts app |
+| `install.py` | Creates the Desktop shortcut | 3 fallback methods (ctypes COM → PowerShell → .bat) |
+| `make_icon.py` | Generates `standup.ico` | Pure stdlib PNG (zlib) embedded in an .ico |
+| `standup.ico` | App + shortcut icon | Regenerate by running `python make_icon.py` |
+| `run.bat` | Launch with no console | `start "" pythonw standup.py` |
+| `README.md` | User-facing docs | Keep beginner-friendly |
+
+## How `standup.py` works
+
+- **State:** `self.mode` is `"sit"` or `"stand"`; `self.remaining` is seconds left
+  in the current posture; `self.running` enables the countdown; `self.popup_open`
+  pauses it while a real popup is up; `self.active_popup` holds the one on-screen
+  popup (real OR preview).
+- **Timer loop:** `_tick()` reschedules itself every 1000 ms via
+  `self.root.after`. It only decrements when
+  `running and not popup_open and not _popup_alive()` — this is what guarantees
+  the timer freezes while any popup is showing, so nothing stacks up if the user
+  steps away.
+- **Transition:** when `remaining` hits 0, `_fire_transition(next_mode)` sets
+  `popup_open`, plays the sound, and calls `_show_popup(next_mode)`.
+- **Popup (`_show_popup`):** a borderless full-screen `Toplevel`. On Windows it
+  uses `attributes("-transparentcolor", ...)` so ONLY the words are visible
+  (true per-pixel transparency); other platforms fall back to a faint dark tint
+  with `-alpha`. A drop-shadow label sits behind the colored text for
+  readability. **Single-popup rule:** the method returns early (just lifts the
+  existing one) if `_popup_alive()`.
+  - `do_done` = confirm: commits `mode`/`remaining` for the next phase (the timer
+    starts NOW, on click), bumps the daily stand count, closes. In `preview=True`
+    mode it only closes and changes nothing (used by the Settings test buttons).
+  - `do_delete` = remove the shown quote from its list, persist, show another.
+  - Bindings: left-click / `Esc` / `Space` / `Return` → done; right-click / `d` /
+    `Delete` → delete. There is intentionally **no on-screen hint text**.
+- **Persistence:** config and quotes live in `~/.standup_reminder/`
+  (`CONFIG_DIR`). Defaults (`DEFAULT_CONFIG`, `DEFAULT_STAND_QUOTES`,
+  `DEFAULT_SIT_QUOTES`) are written on first run. Helpers: `_read_json` /
+  `_write_json`.
+- **Auto-start:** `set_autostart(enable)` writes/removes
+  `StandUpReminder.bat` in the per-user Startup folder (no admin, no registry).
+- **Window icon:** `_build_ui` calls `iconbitmap("standup.ico")` if present.
+
+## How to run & test
+
+The app is a GUI, but you can validate logic headlessly (no window stays open):
+
+```bash
+cd StandUpReminder
+python -c "
+src=open('standup.py',encoding='utf-8').read(); g={}; exec(compile(src,'standup.py','exec'),g)
+tk=g['tk']; root=tk.Tk(); app=g['StandUpApp'](root)
+app.skip()                       # fire a real popup
+print('popup_open:', app.popup_open)
+app._show_popup('sit', preview=True)   # preview must NOT stack
+print('one popup only:', app.active_popup is not None)
+root.destroy(); print('OK')
+"
+```
+
+Quick syntax check: `python -c "import ast; ast.parse(open('standup.py',encoding='utf-8').read())"`
+
+To see it for real, restart the running copy:
+
+```bash
+# Windows (bash tool): find & kill, then relaunch
+taskkill //IM pythonw.exe //F 2>/dev/null; (pythonw standup.py &)
+```
+
+When testing a popup interactively, use **Settings → Test popup** (preview mode)
+so you don't disturb the real timer.
+
+## Common change recipes
+
+- **Add quotes:** append strings to `DEFAULT_STAND_QUOTES` /
+  `DEFAULT_SIT_QUOTES` in `standup.py` (affects fresh installs). Existing users
+  add via the in-app Quote Manager, or by editing
+  `~/.standup_reminder/*_quotes.json`.
+- **Change default times:** edit `DEFAULT_CONFIG["sit_minutes"]` /
+  `["stand_minutes"]`. Note existing users keep their saved `config.json`.
+- **Popup look:** colors `fg` and `panel_bg`, font tuple, and `rely` position in
+  `_show_popup`.
+- **Redesign the icon:** edit the drawing in `make_icon.py` (`_build_pixels`),
+  then `python make_icon.py` to regenerate `standup.ico`, and commit it.
+
+## Gotchas
+
+- The transparent popup is **click-through on empty areas** (a side effect of
+  `-transparentcolor`). The user dismisses by clicking the actual letters or
+  pressing a key — this is intended. If you ever need click-anywhere, switch to a
+  faint full-screen `-alpha` tint instead (loses the pure "floating words" look).
+- The Desktop may be redirected by OneDrive; `install.py`'s `desktop_dir()`
+  resolves the real path via `SHGetFolderPathW`.
+- `make_icon.py` writes a PNG-backed `.ico` (Vista+). Fine for Win10/11.
+
+## Publishing
+
+Repo: https://github.com/johntsunami/StandUpReminder (branch `main`).
+
+```bash
+git add .
+git commit -m "describe the change"
+git push
+```
+
+Credentials are cached via Git Credential Manager on the user's machine.
