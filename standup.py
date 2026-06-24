@@ -351,8 +351,8 @@ class StandUpApp:
                 self.root.iconbitmap(_ico)
         except Exception:
             pass
-        self.root.minsize(300, 200)
-        self._place_bottom_right(self.root, 320, 220)
+        self.root.minsize(340, 360)
+        self._place_bottom_right(self.root, 380, 560)
         self.root.configure(bg=COL_BG)
 
         # Dark theming for ttk widgets (the Quote Manager combo box).
@@ -369,6 +369,13 @@ class StandUpApp:
         self.root.option_add("*TCombobox*Listbox.background", COL_CARD)
         self.root.option_add("*TCombobox*Listbox.foreground", COL_FG)
         self.root.option_add("*TCombobox*Listbox.selectBackground", COL_BTN_HI)
+        style.configure("TNotebook", background=COL_BG, borderwidth=0)
+        style.configure("TNotebook.Tab", background=COL_PANEL, foreground=COL_MUTED,
+                        padding=[14, 7], borderwidth=0, font=(FONT_UI, 10, "bold"))
+        style.map("TNotebook.Tab", background=[("selected", COL_BG)],
+                  foreground=[("selected", COL_FG)])
+        style.configure("Stand.Horizontal.TProgressbar", troughcolor=COL_CARD,
+                        background=COL_GREEN, borderwidth=0, thickness=14)
 
         # Menu bar
         menubar = tk.Menu(self.root)
@@ -384,31 +391,70 @@ class StandUpApp:
         self.accent_bar = tk.Frame(self.root, bg=COL_BLUE, height=4)
         self.accent_bar.pack(fill="x", side="top")
 
-        wrap = tk.Frame(self.root, bg=COL_BG)
-        wrap.pack(fill="both", expand=True, padx=16, pady=(12, 14))
+        # Tabbed interface: Home / Timer / Settings
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill="both", expand=True)
+        self.tab_home = tk.Frame(self.notebook, bg=COL_BG)
+        self.tab_timer = tk.Frame(self.notebook, bg=COL_BG)
+        self.tab_settings = tk.Frame(self.notebook, bg=COL_BG)
+        self.notebook.add(self.tab_home, text="  Home  ")
+        self.notebook.add(self.tab_timer, text="  Timer  ")
+        self.notebook.add(self.tab_settings, text="  Settings  ")
+        self._build_home_tab(self.tab_home)
+        self._build_timer_tab(self.tab_timer)
+        self._build_settings_tab(self.tab_settings)
 
-        tk.Label(wrap, text="🪑  StandUp Reminder", font=(FONT_UI, 10, "bold"),
-                 fg=COL_MUTED, bg=COL_BG).pack(anchor="w")
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        self._refresh_display()
 
-        # Status "card"
-        card = tk.Frame(wrap, bg=COL_CARD)
-        card.pack(fill="x", pady=(10, 12))
+    def open_settings(self):
+        """Settings now lives in a tab -- just bring it forward."""
+        try:
+            self.notebook.select(self.tab_settings)
+        except Exception:
+            pass
+
+    # ---------------------------------------------------------------- tabs
+    def _build_home_tab(self, parent):
+        tk.Label(parent, text="🪑  StandUp Reminder", font=(FONT_UI, 10, "bold"),
+                 fg=COL_MUTED, bg=COL_BG).pack(anchor="w", padx=16, pady=(14, 0))
+        card = tk.Frame(parent, bg=COL_CARD)
+        card.pack(fill="x", padx=16, pady=(10, 14))
         self.status_lbl = tk.Label(card, textvariable=self.status_var,
-                                   font=(FONT_UI, 18, "bold"), fg=COL_BLUE, bg=COL_CARD)
-        self.status_lbl.pack(pady=(12, 2))
+                                   font=(FONT_UI, 20, "bold"), fg=COL_BLUE, bg=COL_CARD)
+        self.status_lbl.pack(pady=(16, 2))
         tk.Label(card, textvariable=self.stats_var, font=(FONT_UI, 9),
-                 fg=COL_MUTED, bg=COL_CARD).pack(pady=(0, 10))
-
-        # Control buttons (evenly stretched)
-        btns = tk.Frame(wrap, bg=COL_BG)
-        btns.pack(fill="x")
+                 fg=COL_MUTED, bg=COL_CARD).pack(pady=(0, 14))
+        btns = tk.Frame(parent, bg=COL_BG)
+        btns.pack(fill="x", padx=16, pady=(0, 16))
         self.start_btn = self._mkbutton(btns, "Pause", self.toggle_running)
         self.start_btn.pack(side="left", expand=True, fill="x", padx=(0, 4))
         self._mkbutton(btns, "Reset", self.reset).pack(side="left", expand=True, fill="x", padx=4)
         self._mkbutton(btns, "Skip", self.skip).pack(side="left", expand=True, fill="x", padx=(4, 0))
 
-        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
-        self._refresh_display()
+    def _build_timer_tab(self, parent):
+        self.timer_state_var = tk.StringVar()
+        self.timer_value_var = tk.StringVar(value="00:00")
+        self.timer_detail_var = tk.StringVar()
+
+        tk.Label(parent, text="⏱  Live timer", font=(FONT_UI, 10, "bold"),
+                 fg=COL_MUTED, bg=COL_BG).pack(anchor="w", padx=16, pady=(14, 0))
+        card = tk.Frame(parent, bg=COL_CARD)
+        card.pack(fill="both", expand=True, padx=16, pady=(10, 16))
+        self.timer_state_lbl = tk.Label(card, textvariable=self.timer_state_var,
+                                        font=(FONT_UI, 11), fg=COL_FG, bg=COL_CARD,
+                                        wraplength=300)
+        self.timer_state_lbl.pack(pady=(22, 4))
+        self.timer_value_lbl = tk.Label(card, textvariable=self.timer_value_var,
+                                        font=("Consolas", 46, "bold"), fg=COL_BLUE, bg=COL_CARD)
+        self.timer_value_lbl.pack()
+        self.timer_bar = ttk.Progressbar(card, style="Stand.Horizontal.TProgressbar",
+                                         maximum=1000, length=250)
+        self.timer_bar.pack(pady=(12, 8))
+        self.timer_detail_lbl = tk.Label(card, textvariable=self.timer_detail_var,
+                                         font=(FONT_UI, 9), fg=COL_MUTED, bg=COL_CARD,
+                                         wraplength=300)
+        self.timer_detail_lbl.pack(pady=(0, 20))
 
     def _mkbutton(self, parent, text, command, bg=COL_BTN, hover=COL_BTN_HI,
                   fg=COL_FG, width=8, font=None):
@@ -537,6 +583,39 @@ class StandUpApp:
             pass
         self.start_btn.config(text="Start" if not self.running else "Pause")
         self.stats_var.set("✔  %d stand breaks today" % self.config["stats"].get("stands", 0))
+        self._refresh_timer_tab(color)
+
+    def _refresh_timer_tab(self, color):
+        """Drive the live countdown shown on the Timer tab."""
+        if not hasattr(self, "timer_value_var"):
+            return
+        mins, secs = divmod(max(0, self.remaining), 60)
+        self.timer_value_var.set("%02d:%02d" % (mins, secs))
+
+        if self.in_warmup:
+            total = max(1, int(self.config.get("startup_delay_minutes", 1)) * 60)
+            phase = "Warm-up — first reminder after this"
+        elif self.mode == "stand":
+            total = self.duration_for("stand")
+            phase = "Standing — SIT DOWN when this ends"
+        else:
+            total = self.duration_for("sit")
+            phase = "Sitting — STAND UP when this ends"
+        frac = 1.0 - (self.remaining / total) if total else 0
+        try:
+            self.timer_bar["value"] = max(0, min(1000, int(frac * 1000)))
+            self.timer_value_lbl.config(fg=color)
+        except Exception:
+            pass
+
+        if not self.running:
+            phase, detail = "Paused", "Press Start on the Home tab to resume."
+        elif self.pause_reason:
+            detail = "Auto-paused (%s) — resumes on its own." % self.pause_reason
+        else:
+            detail = "Counting down once per second — it's working."
+        self.timer_state_var.set(phase)
+        self.timer_detail_var.set(detail)
 
     # ----------------------------------------------------------- controls
     def toggle_running(self):
@@ -695,31 +774,18 @@ class StandUpApp:
         top.lift()
         top.after(30, top.focus_force)
 
-    # ----------------------------------------------------------- settings
-    def open_settings(self):
-        if self._raise_if_open("_settings_win"):
-            return
-        win = tk.Toplevel(self.root)
-        self._settings_win = win
-        win.title("Settings")
-        win.configure(bg=COL_BG)
-        win.resizable(False, False)
-        win.transient(self.root)
+    # ----------------------------------------------------------- settings tab
+    def _build_settings_tab(self, parent):
+        save_status = tk.StringVar()
 
-        def close():
-            self._settings_win = None
-            win.destroy()
-        win.protocol("WM_DELETE_WINDOW", close)
+        # Footer (packed first so it stays pinned to the bottom).
+        foot = tk.Frame(parent, bg=COL_BG)
+        foot.pack(side="bottom", fill="x", padx=16, pady=(0, 14))
+        tk.Label(foot, textvariable=save_status, fg=COL_GREEN, bg=COL_BG,
+                 font=(FONT_UI, 9, "bold")).pack(side="left")
 
-        # Header strip
-        head = tk.Frame(win, bg=COL_PANEL)
-        head.pack(fill="x")
-        tk.Label(head, text="⚙  Settings", font=(FONT_UI, 13, "bold"),
-                 fg=COL_FG, bg=COL_PANEL).pack(anchor="w", padx=16, pady=10)
-        tk.Frame(win, bg=COL_BLUE, height=3).pack(fill="x")
-
-        body = tk.Frame(win, bg=COL_BG)
-        body.pack(fill="both", expand=True, padx=16, pady=12)
+        body = tk.Frame(parent, bg=COL_BG)
+        body.pack(side="top", fill="both", expand=True, padx=16, pady=(12, 4))
 
         sit_v = tk.IntVar(value=self.config["sit_minutes"])
         stand_v = tk.IntVar(value=self.config["stand_minutes"])
@@ -782,7 +848,7 @@ class StandUpApp:
                 if ok:
                     self.config["autostart"] = want_auto
                 else:
-                    messagebox.showwarning(APP_NAME, msg, parent=win)
+                    messagebox.showwarning(APP_NAME, msg, parent=self.root)
 
             self.save_config()
             self._apply_stay_on_top()
@@ -790,7 +856,8 @@ class StandUpApp:
             if not self.in_warmup:
                 self.remaining = min(self.remaining, self.duration_for(self.mode))
             self._refresh_display()
-            close()
+            save_status.set("Saved ✓")
+            self.root.after(2200, lambda: save_status.set(""))
 
         # Live preview: press as many times as you like to test popups.
         test = tk.Frame(body, bg=COL_BG)
@@ -802,16 +869,8 @@ class StandUpApp:
         self._mkbutton(test, "SIT DOWN", lambda: self._show_popup("sit", preview=True),
                        bg="#2c3a52", hover="#384a66", width=10).pack(side="left", padx=3)
 
-        # Footer with Save / Cancel
-        foot = tk.Frame(win, bg=COL_BG)
-        foot.pack(fill="x", padx=16, pady=(0, 14))
         self._mkbutton(foot, "Save", save, bg=COL_GREEN, hover="#b6f0b0",
                        fg="#10331b", width=12).pack(side="right")
-        self._mkbutton(foot, "Cancel", close, width=10).pack(side="right", padx=(0, 8))
-
-        win.update_idletasks()
-        self._place_bottom_right(win, win.winfo_reqwidth() + 16,
-                                 win.winfo_reqheight() + 16)
 
     # ----------------------------------------------------------- quotes mgr
     def open_quotes_manager(self):

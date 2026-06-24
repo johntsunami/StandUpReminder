@@ -102,10 +102,16 @@ that click starts the next phase's countdown.
   state-colored `accent_bar` and a status "card"; `_refresh_display` recolors them
   (blue=sitting, green=standing, peach=warm-up, muted=paused). ttk Combobox is
   themed via `clam` + `option_add` in `_build_ui`.
-- **Single-instance dialogs:** Settings and Quotes are tracked in
-  `self._settings_win` / `self._quotes_win`. `_raise_if_open(attr)` surfaces an
-  existing one instead of opening a duplicate; each dialog's `close()` clears its
-  ref (used by the window-close button, Save, and Cancel).
+- **Tabbed main window:** `_build_ui` builds a `ttk.Notebook` (themed via `clam`)
+  with three pages built by `_build_home_tab` (status card + Pause/Reset/Skip),
+  `_build_timer_tab` (live `mm:ss` + `ttk.Progressbar` + detail line), and
+  `_build_settings_tab` (the options form, formerly a Toplevel, now embedded; its
+  Save shows a transient "Saved ✓"). `open_settings()` just selects the Settings
+  tab (used by the menu). `_refresh_display` calls `_refresh_timer_tab(color)` each
+  tick to update the countdown/progress/detail.
+- **Single-instance dialog:** only Quotes is now a separate window, tracked in
+  `self._quotes_win` with `_raise_if_open("_quotes_win")`; its `close()` clears the
+  ref. (`self._settings_win` is vestigial — Settings is a tab now.)
 
 ## How to run & test
 

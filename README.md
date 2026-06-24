@@ -41,10 +41,14 @@ StandUpReminder\setup.bat
 
 ## How to use it
 
-A small control window opens with:
+A small window opens with three tabs:
 
-- **Pause / Start**, **Reset**, **Skip** buttons.
-- A **Settings** menu and a **Quotes** menu.
+- **Home** — current state + **Pause / Start**, **Reset**, **Skip** buttons.
+- **Timer** — a live `mm:ss` countdown and progress bar, so you can confirm the
+  timer is running (and see when it's paused).
+- **Settings** — all the options below, right inside the window (no separate popup).
+
+There's also a **Quotes** menu for managing your quote lists.
 
 **When a popup appears:**
 
