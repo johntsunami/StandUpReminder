@@ -319,11 +319,14 @@ class StandUpApp:
         self.last_tick = time.monotonic()       # to detect PC sleep (big time gaps)
         self._settings_win = None               # single-instance dialogs
         self._quotes_win = None
+        self.tray = None                        # system-tray icon (if available)
+        self.tray_active = False
 
         self._roll_stats_day()
         self._build_ui()
         self._apply_stay_on_top()
         self._tick()                            # start the 1-second heartbeat
+        self._init_tray()                       # prefer the tray; hide the widget
 
     # ------------------------------------------------------------------ utils
     def duration_for(self, mode):
@@ -584,6 +587,11 @@ class StandUpApp:
         self.start_btn.config(text="Start" if not self.running else "Pause")
         self.stats_var.set("✔  %d stand breaks today" % self.config["stats"].get("stands", 0))
         self._refresh_timer_tab(color)
+        if self.tray_active and self.tray:
+            try:
+                self.tray.update_tip(self._tray_tip())
+            except Exception:
+                pass
 
     def _refresh_timer_tab(self, color):
         """Drive the live countdown shown on the Timer tab."""
@@ -1037,8 +1045,77 @@ class StandUpApp:
             parent=self.root)
 
     def on_close(self):
-        self.save_config()
+        # With a tray icon, the X button just hides the window -- the app keeps
+        # running in the tray. Without a tray, X quits as usual.
+        if self.tray_active:
+            self.save_config()
+            self.root.withdraw()
+        else:
+            self._quit_app()
+
+    # ----------------------------------------------------------- system tray
+    def _init_tray(self):
+        self.tray = None
+        self.tray_active = False
+        if platform.system() != "Windows":
+            return
+        try:
+            ico = os.path.join(os.path.dirname(os.path.abspath(__file__)), "standup.ico")
+            tray = WinTray(self, ico)
+            if tray.start():
+                self.tray = tray
+                self.tray_active = True
+                self.root.withdraw()            # start hidden -> only the tray icon
+                self._pump_tray()
+        except Exception:
+            self.tray = None
+            self.tray_active = False
+
+    def _pump_tray(self):
+        if not (self.tray_active and self.tray):
+            return
+        try:
+            self.tray.pump()
+        except Exception:
+            pass
+        self.root.after(120, self._pump_tray)
+
+    def _show_window(self, tab=None):
+        try:
+            self.root.deiconify()
+            self.root.lift()
+            self.root.attributes("-topmost", True)
+            self.root.after(250, lambda: self.root.attributes(
+                "-topmost", bool(self.config.get("stay_on_top"))))
+            self.root.focus_force()
+            if tab == "settings" and hasattr(self, "notebook"):
+                self.notebook.select(self.tab_settings)
+        except Exception:
+            pass
+
+    def _quit_app(self):
+        try:
+            self.save_config()
+        except Exception:
+            pass
+        if self.tray:
+            try:
+                self.tray.stop()
+            except Exception:
+                pass
         self.root.destroy()
+
+    def _tray_tip(self):
+        mins, secs = divmod(max(0, self.remaining), 60)
+        if not self.running:
+            return "StandUp Reminder — Paused"
+        if self.pause_reason:
+            return "StandUp Reminder — Paused (%s)" % self.pause_reason
+        if self.in_warmup:
+            return "StandUp Reminder — starting in %02d:%02d" % (mins, secs)
+        if self.mode == "stand":
+            return "StandUp Reminder — Standing %02d:%02d to SIT DOWN" % (mins, secs)
+        return "StandUp Reminder — Sitting %02d:%02d to STAND UP" % (mins, secs)
 
 
 # --------------------------------------------------------------------------- #
@@ -1226,6 +1303,209 @@ def _in_call():
         return False
     running_blob = " ".join(_running_process_names())
     return any(hint in running_blob for hint in hints)
+
+
+# --------------------------------------------------------------------------- #
+# System-tray icon (Windows, pure ctypes -- no pip). If anything here fails,
+# the caller just keeps showing the normal window instead.
+# --------------------------------------------------------------------------- #
+class WinTray:
+    ID_SHOW, ID_PAUSE, ID_RESET, ID_SKIP, ID_SETTINGS, ID_QUOTES, ID_QUIT = range(1, 8)
+    WM_TRAYICON = 0x0400 + 32          # WM_USER + 32
+
+    def __init__(self, app, icon_path):
+        self.app = app
+        self.icon_path = icon_path
+        self.hwnd = None
+        self.nid = None
+        self._refs = []                # keep ctypes callbacks/structs alive
+
+    def start(self):
+        if platform.system() != "Windows":
+            return False
+        try:
+            import ctypes
+            from ctypes import wintypes
+            self.user32 = ctypes.windll.user32
+            self.shell32 = ctypes.windll.shell32
+            kernel32 = ctypes.windll.kernel32
+            u = self.user32
+
+            LRESULT = ctypes.c_ssize_t
+            WNDPROCTYPE = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT,
+                                             wintypes.WPARAM, wintypes.LPARAM)
+
+            class WNDCLASS(ctypes.Structure):
+                _fields_ = [("style", wintypes.UINT), ("lpfnWndProc", WNDPROCTYPE),
+                            ("cbClsExtra", ctypes.c_int), ("cbWndExtra", ctypes.c_int),
+                            ("hInstance", wintypes.HINSTANCE), ("hIcon", wintypes.HICON),
+                            ("hCursor", wintypes.HANDLE), ("hbrBackground", wintypes.HANDLE),
+                            ("lpszMenuName", wintypes.LPCWSTR), ("lpszClassName", wintypes.LPCWSTR)]
+
+            class NOTIFYICONDATA(ctypes.Structure):
+                _fields_ = [("cbSize", wintypes.DWORD), ("hWnd", wintypes.HWND),
+                            ("uID", wintypes.UINT), ("uFlags", wintypes.UINT),
+                            ("uCallbackMessage", wintypes.UINT), ("hIcon", wintypes.HICON),
+                            ("szTip", wintypes.WCHAR * 128), ("dwState", wintypes.DWORD),
+                            ("dwStateMask", wintypes.DWORD), ("szInfo", wintypes.WCHAR * 256),
+                            ("uVersion", wintypes.UINT), ("szInfoTitle", wintypes.WCHAR * 64),
+                            ("dwInfoFlags", wintypes.DWORD), ("guidItem", ctypes.c_byte * 16),
+                            ("hBalloonIcon", wintypes.HICON)]
+
+            class MSG(ctypes.Structure):
+                _fields_ = [("hWnd", wintypes.HWND), ("message", wintypes.UINT),
+                            ("wParam", wintypes.WPARAM), ("lParam", wintypes.LPARAM),
+                            ("time", wintypes.DWORD), ("pt", wintypes.POINT)]
+            self.NOTIFYICONDATA, self.MSG = NOTIFYICONDATA, MSG
+
+            u.DefWindowProcW.restype = LRESULT
+            u.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM,
+                                         wintypes.LPARAM]
+            u.CreateWindowExW.restype = wintypes.HWND
+            u.CreateWindowExW.argtypes = [wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR,
+                                          wintypes.DWORD, ctypes.c_int, ctypes.c_int,
+                                          ctypes.c_int, ctypes.c_int, wintypes.HWND,
+                                          wintypes.HMENU, wintypes.HINSTANCE, wintypes.LPVOID]
+            u.DispatchMessageW.restype = LRESULT
+            u.CreatePopupMenu.restype = wintypes.HMENU
+            u.AppendMenuW.argtypes = [wintypes.HMENU, wintypes.UINT, ctypes.c_void_p,
+                                      wintypes.LPCWSTR]
+            u.TrackPopupMenu.restype = ctypes.c_int
+            u.TrackPopupMenu.argtypes = [wintypes.HMENU, wintypes.UINT, ctypes.c_int,
+                                         ctypes.c_int, ctypes.c_int, wintypes.HWND,
+                                         wintypes.LPVOID]
+            u.LoadImageW.restype = wintypes.HANDLE
+            u.LoadImageW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR, wintypes.UINT,
+                                     ctypes.c_int, ctypes.c_int, wintypes.UINT]
+            kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+            self.shell32.Shell_NotifyIconW.restype = wintypes.BOOL
+
+            self._wndproc = WNDPROCTYPE(self._on_message)
+            self._refs.append(self._wndproc)
+            hinst = kernel32.GetModuleHandleW(None)
+            wc = WNDCLASS()
+            wc.lpfnWndProc = self._wndproc
+            wc.hInstance = hinst
+            wc.lpszClassName = "StandUpReminderTrayWnd"
+            self._refs.append(wc)
+            u.RegisterClassW(ctypes.byref(wc))   # ok if already registered
+
+            self.hwnd = u.CreateWindowExW(0, "StandUpReminderTrayWnd", "StandUpReminder",
+                                          0, 0, 0, 0, 0, None, None, hinst, None)
+            if not self.hwnd:
+                return False
+
+            hicon = u.LoadImageW(None, self.icon_path, 1, 0, 0, 0x0010 | 0x0040) or 0
+
+            nid = NOTIFYICONDATA()
+            nid.cbSize = ctypes.sizeof(NOTIFYICONDATA)
+            nid.hWnd = self.hwnd
+            nid.uID = 1
+            nid.uFlags = 0x01 | 0x02 | 0x04      # NIF_MESSAGE | NIF_ICON | NIF_TIP
+            nid.uCallbackMessage = self.WM_TRAYICON
+            nid.hIcon = hicon
+            nid.szTip = "StandUp Reminder"
+            self.nid = nid
+            return bool(self.shell32.Shell_NotifyIconW(0, ctypes.byref(nid)))   # NIM_ADD
+        except Exception:
+            return False
+
+    def _on_message(self, hwnd, msg, wparam, lparam):
+        try:
+            if msg == self.WM_TRAYICON:
+                low = lparam & 0xFFFF
+                if low == 0x0203:        # WM_LBUTTONDBLCLK
+                    self._dispatch(self.ID_SHOW)
+                elif low == 0x0205:      # WM_RBUTTONUP
+                    self._show_menu(hwnd)
+                return 0
+        except Exception:
+            pass
+        return self.user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+    def _show_menu(self, hwnd):
+        import ctypes
+        from ctypes import wintypes
+        u = self.user32
+        menu = u.CreatePopupMenu()
+
+        def add(cid, text):
+            u.AppendMenuW(menu, 0x0000, cid, text)          # MF_STRING
+
+        def sep():
+            u.AppendMenuW(menu, 0x0800, 0, None)            # MF_SEPARATOR
+
+        add(self.ID_SHOW, "Open StandUp Reminder")
+        sep()
+        add(self.ID_PAUSE, "Resume timer" if not self.app.running else "Pause timer")
+        add(self.ID_RESET, "Reset")
+        add(self.ID_SKIP, "Skip")
+        sep()
+        add(self.ID_SETTINGS, "Settings")
+        add(self.ID_QUOTES, "Quotes")
+        sep()
+        add(self.ID_QUIT, "Quit")
+
+        pt = wintypes.POINT()
+        u.GetCursorPos(ctypes.byref(pt))
+        u.SetForegroundWindow(hwnd)
+        # TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY
+        cmd = u.TrackPopupMenu(menu, 0x0002 | 0x0100 | 0x0080, pt.x, pt.y, 0, hwnd, None)
+        u.PostMessageW(hwnd, 0x0000, 0, 0)                  # WM_NULL
+        u.DestroyMenu(menu)
+        if cmd:
+            self._dispatch(cmd)
+
+    def _dispatch(self, cmd):
+        a = self.app
+        if cmd == self.ID_SHOW:
+            a._show_window()
+        elif cmd == self.ID_PAUSE:
+            a.toggle_running()
+        elif cmd == self.ID_RESET:
+            a.reset()
+        elif cmd == self.ID_SKIP:
+            a.skip()
+        elif cmd == self.ID_SETTINGS:
+            a._show_window("settings")
+        elif cmd == self.ID_QUOTES:
+            a._show_window()
+            a.open_quotes_manager()
+        elif cmd == self.ID_QUIT:
+            a._quit_app()
+
+    def pump(self):
+        import ctypes
+        u = self.user32
+        msg = self.MSG()
+        # Only drain OUR hidden window's messages (don't disturb tkinter's loop).
+        while u.PeekMessageW(ctypes.byref(msg), self.hwnd, 0, 0, 1):   # PM_REMOVE
+            u.TranslateMessage(ctypes.byref(msg))
+            u.DispatchMessageW(ctypes.byref(msg))
+
+    def update_tip(self, text):
+        if not self.nid:
+            return
+        try:
+            import ctypes
+            self.nid.szTip = text[:127]
+            self.nid.uFlags = 0x04          # NIF_TIP
+            self.shell32.Shell_NotifyIconW(1, ctypes.byref(self.nid))   # NIM_MODIFY
+        except Exception:
+            pass
+
+    def stop(self):
+        import ctypes
+        try:
+            if self.nid:
+                self.shell32.Shell_NotifyIconW(2, ctypes.byref(self.nid))   # NIM_DELETE
+        except Exception:
+            pass
+        try:
+            if self.hwnd:
+                self.user32.DestroyWindow(self.hwnd)
+        except Exception:
+            pass
 
 
 # --------------------------------------------------------------------------- #

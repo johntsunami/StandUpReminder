@@ -41,7 +41,23 @@ StandUpReminder\setup.bat
 
 ## How to use it
 
-A small window opens with three tabs:
+### It lives in the system tray
+
+On Windows the app runs as an **icon in the system tray** (bottom-right
+notification area) — **no window sits open**. From the tray icon:
+
+- **Double-click** → open the window.
+- **Right-click** → menu: Open, Pause/Resume, Reset, Skip, Settings, Quotes, Quit.
+- **Hover** → live status, e.g. "StandUp Reminder — Sitting 22:14 to STAND UP".
+- Closing the window (**X**) just **hides it back to the tray**; the app keeps
+  running and reminding you. Use **Quit** in the tray menu to actually exit.
+
+If the tray icon can't be created (e.g. a restricted environment), the app falls
+back to showing the small window instead — nothing is lost.
+
+### The window
+
+Opened from the tray, the window has three tabs:
 
 - **Home** — current state + **Pause / Start**, **Reset**, **Skip** buttons.
 - **Timer** — a live `mm:ss` countdown and progress bar, so you can confirm the

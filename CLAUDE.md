@@ -121,6 +121,17 @@ that click starts the next phase's countdown.
 - **Single-instance dialog:** only Quotes is now a separate window, tracked in
   `self._quotes_win` with `_raise_if_open("_quotes_win")`; its `close()` clears the
   ref. (`self._settings_win` is vestigial — Settings is a tab now.)
+- **System tray (`WinTray`, pure ctypes, Windows):** `Shell_NotifyIcon` tray icon
+  with a hidden message window + `WNDPROC`. `StandUpApp._init_tray()` starts it; on
+  success the root window is `withdraw()`n (tray-only) and `_pump_tray()` drains the
+  hidden window's messages every 120ms via `root.after` (single-threaded — uses an
+  hwnd-filtered `PeekMessage`, so it doesn't disturb tkinter's loop). Right-click →
+  `TrackPopupMenu` (TPM_RETURNCMD) → `_dispatch` → `StandUpApp` methods; double-click
+  → `_show_window`. `on_close` hides to tray when `tray_active`, else `_quit_app()`
+  (which calls `tray.stop()` = NIM_DELETE). `_refresh_display` pushes a live tooltip
+  via `tray.update_tip(_tray_tip())`. If `start()` fails (non-Windows / restricted),
+  `tray_active` stays False and the normal window shows. Reminders still fire while
+  hidden (timer is `after`-driven; popups are independent Toplevels).
 
 ## How to run & test
 
