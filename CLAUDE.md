@@ -81,8 +81,12 @@ that click starts the next phase's countdown.
   - `_idle_seconds()` — `GetLastInputInfo`; `>= AWAY_IDLE_SECONDS` (120) = away /
     screen asleep.
   - `_in_call()` — reads `HKCU\...\CapabilityAccessManager\ConsentStore\
-    {microphone,webcam}` (incl. `NonPackaged`); any app with `LastUsedTimeStop == 0`
-    means the device is in use right now (covers Teams/Zoom/etc.).
+    {microphone,webcam}` for apps with `LastUsedTimeStop == 0` (in use now), but
+    only counts it as a call when the holder matches `MEETING_HINTS` (teams/zoom/
+    webex/…) AND a process with that hint is running (`_running_process_names()`
+    via Toolhelp). This avoids false positives from games/voice apps and stale
+    registry entries (a force-closed app can leave `LastUsedTimeStop == 0`
+    forever, which previously stuck the timer "in a call" and blocked resume).
   Toggles: `pause_when_away`, `pause_in_call` (both default True). Note: when the
   PC fully sleeps the process is suspended, so the timer pauses naturally.
 - **Warm-up:** `startup_delay_minutes` (default 30). On launch `in_warmup` is set

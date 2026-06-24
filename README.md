@@ -69,8 +69,10 @@ popup is showing** — so nothing piles up if you step away from your desk.
 - **Pause when locked / screen asleep** (default ON) — the timer holds while your
   workstation is locked, the screen is asleep, or you've been away from the
   keyboard for a couple of minutes, so a break never counts while you're not there.
-- **Pause during calls** (default ON) — the timer holds whenever your microphone
-  or camera is in use (Teams, Zoom, etc.), so it won't tell you to move mid-meeting.
+- **Pause during meetings** (default ON) — the timer holds when a recognized
+  meeting app (Teams, Zoom, Webex, etc.) is actively using your mic or camera, so
+  it won't tell you to move mid-meeting. Games and other apps that use the mic do
+  **not** count as a meeting.
 - **Restart cycle if away/locked over (min)** (default **30**) — if your screen was
   locked or asleep for at least this long, the timer **restarts when you log back
   in** and the **next popup is STAND UP** (since you were probably already up and

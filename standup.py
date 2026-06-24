@@ -826,7 +826,7 @@ class StandUpApp:
                      highlightthickness=0, bd=0))
         row(5, "Play sound on popup", check(sound_v))
         row(6, "Pause when locked / screen asleep", check(away_v))
-        row(7, "Pause during calls (mic or camera in use)", check(call_v))
+        row(7, "Pause during meetings (Teams, Zoom, etc.)", check(call_v))
         row(8, "Keep control window on top", check(topmost_v))
         row(9, "Start automatically at login", check(auto_v))
         body.grid_columnconfigure(0, weight=1)
@@ -1115,48 +1115,110 @@ def _idle_seconds():
     return 0.0
 
 
-def _scan_consent_key(key):
-    """Recursively look for any app whose LastUsedTimeStop == 0 (in use NOW)."""
-    i = 0
-    while True:
-        try:
-            sub = winreg.EnumKey(key, i)
-        except OSError:
-            break
-        i += 1
-        try:
-            with winreg.OpenKey(key, sub) as sk:
-                if sub.lower() == "nonpackaged":
-                    if _scan_consent_key(sk):
-                        return True
-                else:
-                    try:
-                        val, _ = winreg.QueryValueEx(sk, "LastUsedTimeStop")
-                        if val == 0:
-                            return True
-                    except OSError:
-                        pass
-        except OSError:
-            pass
-    return False
+# Substrings identifying real meeting/call apps. Matched against both packaged
+# family names (e.g. "MSTeams_8wekyb3d8bbwe" contains "teams") and exe basenames
+# (e.g. "ms-teams.exe", "Zoom.exe"). A game like "pioneergame-d.exe" matches none,
+# so holding the mic for in-game voice no longer looks like a call.
+MEETING_HINTS = ("teams", "zoom", "webex", "skype", "slack", "discord",
+                 "gotomeet", "bluejeans", "ringcentral", "cisco", "lync",
+                 "chime", "jabber", "whereby", "bluejean")
 
 
-def _capability_in_use(capability):
-    """True if any app is currently using the given device (microphone/webcam)."""
+def _consent_in_use_identifiers(capability):
+    """Lowercase identifiers of apps currently holding the device (mic/webcam):
+    exe basenames for NonPackaged apps, package key names for packaged apps."""
+    out = []
     if not HAS_WINREG or platform.system() != "Windows":
-        return False
+        return out
     base = (r"SOFTWARE\Microsoft\Windows\CurrentVersion"
             r"\CapabilityAccessManager\ConsentStore" + "\\" + capability)
+
+    def walk(key, nonpackaged):
+        i = 0
+        while True:
+            try:
+                sub = winreg.EnumKey(key, i)
+            except OSError:
+                break
+            i += 1
+            try:
+                with winreg.OpenKey(key, sub) as sk:
+                    if sub.lower() == "nonpackaged":
+                        walk(sk, True)
+                    else:
+                        try:
+                            stop, _ = winreg.QueryValueEx(sk, "LastUsedTimeStop")
+                        except OSError:
+                            continue
+                        if stop != 0:
+                            continue
+                        ident = sub.split("#")[-1].lower() if nonpackaged else sub.lower()
+                        if ident:
+                            out.append(ident)
+            except OSError:
+                pass
+
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, base) as key:
-            return _scan_consent_key(key)
+            walk(key, False)
     except OSError:
-        return False
+        pass
+    return out
+
+
+def _running_process_names():
+    """Set of lowercase running executable names (via Toolhelp; stdlib only)."""
+    names = set()
+    if platform.system() != "Windows":
+        return names
+    try:
+        import ctypes
+        from ctypes import wintypes
+        TH32CS_SNAPPROCESS = 0x00000002
+        MAX_PATH = 260
+
+        class PROCESSENTRY32(ctypes.Structure):
+            _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
+                        ("th32ProcessID", wintypes.DWORD),
+                        ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
+                        ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+                        ("th32ParentProcessID", wintypes.DWORD),
+                        ("pcPriClassBase", ctypes.c_long), ("dwFlags", wintypes.DWORD),
+                        ("szExeFile", ctypes.c_char * MAX_PATH)]
+
+        k32 = ctypes.windll.kernel32
+        k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        snap = k32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+        if not snap or snap == ctypes.c_void_p(-1).value:
+            return names
+        try:
+            entry = PROCESSENTRY32()
+            entry.dwSize = ctypes.sizeof(PROCESSENTRY32)
+            ok = k32.Process32First(snap, ctypes.byref(entry))
+            while ok:
+                names.add(entry.szExeFile.decode("latin-1", "ignore").lower())
+                ok = k32.Process32Next(snap, ctypes.byref(entry))
+        finally:
+            k32.CloseHandle(snap)
+    except Exception:
+        pass
+    return names
 
 
 def _in_call():
-    """A meeting/call is on if the mic or camera is actively in use."""
-    return _capability_in_use("microphone") or _capability_in_use("webcam")
+    """True only when a recognized meeting app (Teams/Zoom/etc.) is *actively*
+    using the mic or camera AND is currently running -- so games, voice
+    assistants, recorders, and stale registry entries don't count as a call."""
+    hints = set()
+    for capability in ("microphone", "webcam"):
+        for ident in _consent_in_use_identifiers(capability):
+            for hint in MEETING_HINTS:
+                if hint in ident:
+                    hints.add(hint)
+    if not hints:
+        return False
+    running_blob = " ".join(_running_process_names())
+    return any(hint in running_blob for hint in hints)
 
 
 # --------------------------------------------------------------------------- #
