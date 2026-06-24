@@ -698,15 +698,22 @@ class StandUpApp:
         # (true per-pixel transparency on Windows). Fall back to a faint dark
         # tint on platforms that don't support -transparentcolor.
         TRANSPARENT = "#FF00FF"
+        opacity = float(self.config.get("transparency", 0.9))
         top.configure(bg=TRANSPARENT)
         try:
             top.attributes("-transparentcolor", TRANSPARENT)
             panel_bg = TRANSPARENT
+            # -alpha (combined with -transparentcolor) sets how opaque the words
+            # themselves are -- this is what the "Popup transparency" slider drives.
+            try:
+                top.attributes("-alpha", opacity)
+            except Exception:
+                pass
         except Exception:
             panel_bg = "#0e0e16"
             top.configure(bg=panel_bg)
             try:
-                top.attributes("-alpha", 0.88)
+                top.attributes("-alpha", opacity)
             except Exception:
                 pass
 
@@ -815,8 +822,8 @@ class StandUpApp:
                                   activebackground=COL_BG, selectcolor=COL_CARD,
                                   highlightthickness=0, bd=0)
 
-        row(0, "Sit time before STAND UP (min)", spin(sit_v, 1, 240))
-        row(1, "Stand time before SIT DOWN (min)", spin(stand_v, 1, 120))
+        row(0, "Sit time before STAND UP prompt (min)", spin(sit_v, 1, 240))
+        row(1, "Stand time before SIT DOWN prompt (min)", spin(stand_v, 1, 120))
         row(2, "Start timer this long after launch (min)", spin(delay_v, 0, 240))
         row(3, "Restart cycle if away/locked over (min)", spin(reset_v, 1, 240))
         row(4, "Popup transparency",

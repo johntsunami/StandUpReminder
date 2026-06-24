@@ -59,6 +59,11 @@ that click starts the next phase's countdown.
   - `do_done` = confirm: commits `mode`/`remaining` for the next phase (the timer
     starts NOW, on click), bumps the daily stand count, closes. In `preview=True`
     mode it only closes and changes nothing (used by the Settings test buttons).
+  - `config["transparency"]` is applied as the popup's `-alpha` (alongside
+    `-transparentcolor`), so the "Popup transparency" slider controls how opaque
+    the floating words are.
+  - Cycle: sit (`sit_minutes`) → STAND UP → stand (`stand_minutes`) → SIT DOWN →
+    sit … Each phase's duration is set on popup-confirm via `duration_for(mode)`.
   - `do_delete` = remove the shown quote from its list, persist, show another.
   - Bindings: left-click / `Esc` / `Space` / `Return` → done; right-click / `d` /
     `Delete` → delete. There is intentionally **no on-screen hint text**.

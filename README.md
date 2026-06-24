@@ -62,8 +62,9 @@ popup is showing** — so nothing piles up if you step away from your desk.
 
 ### Settings (menu → Settings)
 
-- **Sit time** before STAND UP (default **45 min**)
-- **Stand time** before SIT DOWN (default **5 min**)
+- **Sit time before the STAND UP prompt** (default **45 min**)
+- **Stand time before the SIT DOWN prompt** (default **5 min**) — how long you stay
+  standing before it tells you to sit; then the sit timer starts over.
 - **Start timer this long after launch** (default **30 min**) — a grace period
   after you turn the computer on before the cycle begins.
 - **Pause when locked / screen asleep** (default ON) — the timer holds while your
@@ -77,7 +78,8 @@ popup is showing** — so nothing piles up if you step away from your desk.
   locked or asleep for at least this long, the timer **restarts when you log back
   in** and the **next popup is STAND UP** (since you were probably already up and
   moving while away). Counts time the PC spent fully asleep too.
-- **Sound** on/off, **popup transparency**, keep the control window on top.
+- **Sound** on/off, **popup transparency** (how see-through the floating words are),
+  keep the control window on top.
 - **Start automatically at login** — **ON by default** (per-user, no admin rights
   needed). Uncheck it here if you ever want to disable it on a particular machine.
 - **Test popup** buttons — press them to preview STAND UP / SIT DOWN as many
