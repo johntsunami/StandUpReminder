@@ -31,6 +31,12 @@ try:
 except ImportError:
     HAS_WINSOUND = False
 
+try:
+    import winreg
+    HAS_WINREG = True
+except ImportError:
+    HAS_WINREG = False
+
 
 # --------------------------------------------------------------------------- #
 # Paths & configuration
@@ -49,6 +55,9 @@ DEFAULT_CONFIG = {
     "transparency": 0.90,     # popup opacity 0.5 (very see-through) - 1.0 (solid)
     "autostart": True,        # launch automatically at login (default ON)
     "stay_on_top": False,     # keep the little control window above others
+    "startup_delay_minutes": 30,  # grace period after launch before the cycle begins
+    "pause_when_away": True,  # pause while locked / screen asleep / idle
+    "pause_in_call": True,    # pause while a call is using the mic or camera
     "stats": {"date": "", "stands": 0},
 }
 
@@ -283,11 +292,14 @@ class StandUpApp:
 
         # --- timer state ----------------------------------------------------
         self.mode = "sit"                       # current posture: "sit" or "stand"
-        self.remaining = self.duration_for("sit")
+        delay = max(0, int(self.config.get("startup_delay_minutes", 0))) * 60
+        self.in_warmup = delay > 0              # grace period right after launch
+        self.remaining = delay if self.in_warmup else self.duration_for("sit")
         self.running = True                     # is the countdown active?
         self.popup_open = False                 # paused while a popup is showing
         self.pending_mode = None                # mode to switch to after popup
         self.active_popup = None
+        self.pause_reason = None                # set when locked / away / in a call
 
         self._roll_stats_day()
         self._build_ui()
@@ -320,8 +332,8 @@ class StandUpApp:
                 self.root.iconbitmap(_ico)
         except Exception:
             pass
-        self.root.geometry("300x150")
         self.root.minsize(280, 140)
+        self._place_bottom_right(self.root, 300, 165)
         self.root.configure(bg="#1e1e2e")
 
         # Menu bar
@@ -353,6 +365,17 @@ class StandUpApp:
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self._refresh_display()
 
+    def _place_bottom_right(self, win, w, h, margin=24, taskbar=56):
+        """Position a window in the lower-right corner, above the taskbar."""
+        try:
+            sw = win.winfo_screenwidth()
+            sh = win.winfo_screenheight()
+            x = max(0, sw - w - margin)
+            y = max(0, sh - h - margin - taskbar)
+            win.geometry("%dx%d+%d+%d" % (w, h, x, y))
+        except Exception:
+            win.geometry("%dx%d" % (w, h))
+
     def _apply_stay_on_top(self):
         try:
             self.root.attributes("-topmost", bool(self.config.get("stay_on_top")))
@@ -367,20 +390,48 @@ class StandUpApp:
         except Exception:
             return False
 
+    def _should_pause(self):
+        """Return a short reason string if the timer should hold, else None."""
+        if self.config.get("pause_when_away"):
+            if _is_workstation_locked():
+                return "screen locked"
+            if _idle_seconds() >= AWAY_IDLE_SECONDS:
+                return "away from desk"
+        if self.config.get("pause_in_call"):
+            if _in_call():
+                return "in a call"
+        return None
+
     def _tick(self):
         # The timer is frozen while a popup is showing, so nothing stacks up or
         # keeps firing if you've stepped away -- exactly one popup waits for you.
         if self.running and not self.popup_open and not self._popup_alive():
-            self.remaining -= 1
-            if self.remaining <= 0:
-                nxt = "stand" if self.mode == "sit" else "sit"
-                self._fire_transition(nxt)
+            self.pause_reason = self._should_pause()
+            if not self.pause_reason:
+                self.remaining -= 1
+                if self.remaining <= 0:
+                    if self.in_warmup:
+                        # Grace period over -> begin the real sitting cycle.
+                        self.in_warmup = False
+                        self.mode = "sit"
+                        self.remaining = self.duration_for("sit")
+                    else:
+                        nxt = "stand" if self.mode == "sit" else "sit"
+                        self._fire_transition(nxt)
         self._refresh_display()
         self.root.after(1000, self._tick)
 
     def _refresh_display(self):
-        # No countdown is shown on purpose -- just the current posture.
-        self.status_var.set("Standing" if self.mode == "stand" else "Sitting")
+        # No countdown is shown on purpose -- just the current state, in words.
+        if not self.running:
+            state = "Paused"
+        elif self.pause_reason:
+            state = "Paused — %s" % self.pause_reason
+        elif self.in_warmup:
+            state = "Getting started…"
+        else:
+            state = "Standing" if self.mode == "stand" else "Sitting"
+        self.status_var.set(state)
         self.start_btn.config(text="Start" if not self.running else "Pause")
         self.stats_var.set("Stand breaks today: %d" % self.config["stats"].get("stands", 0))
 
@@ -390,14 +441,22 @@ class StandUpApp:
         self._refresh_display()
 
     def reset(self):
+        self.in_warmup = False
         self.mode = "sit"
         self.remaining = self.duration_for("sit")
         self.running = True
+        self.pause_reason = None
         self._refresh_display()
 
     def skip(self):
-        """Immediately fire the next transition (handy for testing)."""
+        """Skip ahead: end the warm-up, or fire the next popup now."""
         if self.popup_open:
+            return
+        if self.in_warmup:
+            self.in_warmup = False
+            self.mode = "sit"
+            self.remaining = self.duration_for("sit")
+            self._refresh_display()
             return
         nxt = "stand" if self.mode == "sit" else "sit"
         self._fire_transition(nxt)
@@ -541,11 +600,13 @@ class StandUpApp:
         win.resizable(False, False)
         win.transient(self.root)
 
-        pad = {"padx": 10, "pady": 6}
+        pad = {"padx": 10, "pady": 5}
         sit_v = tk.IntVar(value=self.config["sit_minutes"])
         stand_v = tk.IntVar(value=self.config["stand_minutes"])
-        snooze_v = tk.IntVar(value=self.config["snooze_minutes"])
+        delay_v = tk.IntVar(value=self.config.get("startup_delay_minutes", 30))
         sound_v = tk.BooleanVar(value=self.config["sound_enabled"])
+        away_v = tk.BooleanVar(value=self.config.get("pause_when_away", True))
+        call_v = tk.BooleanVar(value=self.config.get("pause_in_call", True))
         topmost_v = tk.BooleanVar(value=self.config["stay_on_top"])
         auto_v = tk.BooleanVar(value=self.config["autostart"])
         trans_v = tk.DoubleVar(value=self.config["transparency"])
@@ -555,31 +616,33 @@ class StandUpApp:
                      font=("Segoe UI", 10)).grid(row=r, column=0, sticky="w", **pad)
             widget.grid(row=r, column=1, sticky="w", **pad)
 
+        def check(var):
+            return tk.Checkbutton(win, variable=var, bg="#1e1e2e",
+                                  activebackground="#1e1e2e", selectcolor="#313244")
+
         row(0, "Sit time before STAND UP (min)",
             tk.Spinbox(win, from_=1, to=240, textvariable=sit_v, width=6))
         row(1, "Stand time before SIT DOWN (min)",
             tk.Spinbox(win, from_=1, to=120, textvariable=stand_v, width=6))
-        row(2, "Snooze length (min)",
-            tk.Spinbox(win, from_=1, to=60, textvariable=snooze_v, width=6))
+        row(2, "Start timer this long after launch (min)",
+            tk.Spinbox(win, from_=0, to=240, textvariable=delay_v, width=6))
         row(3, "Popup transparency",
             tk.Scale(win, from_=0.5, to=1.0, resolution=0.05, orient="horizontal",
                      variable=trans_v, length=150, bg="#1e1e2e", fg="#cdd6f4",
                      highlightthickness=0))
-        row(4, "Play sound on popup",
-            tk.Checkbutton(win, variable=sound_v, bg="#1e1e2e",
-                           activebackground="#1e1e2e"))
-        row(5, "Keep control window on top",
-            tk.Checkbutton(win, variable=topmost_v, bg="#1e1e2e",
-                           activebackground="#1e1e2e"))
-        row(6, "Start automatically at login",
-            tk.Checkbutton(win, variable=auto_v, bg="#1e1e2e",
-                           activebackground="#1e1e2e"))
+        row(4, "Play sound on popup", check(sound_v))
+        row(5, "Pause when locked / screen asleep", check(away_v))
+        row(6, "Pause during calls (mic or camera in use)", check(call_v))
+        row(7, "Keep control window on top", check(topmost_v))
+        row(8, "Start automatically at login", check(auto_v))
 
         def save():
             self.config["sit_minutes"] = max(1, int(sit_v.get()))
             self.config["stand_minutes"] = max(1, int(stand_v.get()))
-            self.config["snooze_minutes"] = max(1, int(snooze_v.get()))
+            self.config["startup_delay_minutes"] = max(0, int(delay_v.get()))
             self.config["sound_enabled"] = bool(sound_v.get())
+            self.config["pause_when_away"] = bool(away_v.get())
+            self.config["pause_in_call"] = bool(call_v.get())
             self.config["stay_on_top"] = bool(topmost_v.get())
             self.config["transparency"] = float(trans_v.get())
 
@@ -593,14 +656,15 @@ class StandUpApp:
 
             self.save_config()
             self._apply_stay_on_top()
-            # Apply new durations to the current cycle immediately.
-            self.remaining = min(self.remaining, self.duration_for(self.mode))
+            # Apply new sit/stand durations to the current cycle right away.
+            if not self.in_warmup:
+                self.remaining = min(self.remaining, self.duration_for(self.mode))
             self._refresh_display()
             win.destroy()
 
         # --- live preview: press as many times as you like to test popups ----
         test = tk.Frame(win, bg="#1e1e2e")
-        test.grid(row=7, column=0, columnspan=2, pady=(12, 0))
+        test.grid(row=9, column=0, columnspan=2, pady=(12, 0))
         tk.Label(test, text="Test popup:", fg="#cdd6f4", bg="#1e1e2e",
                  font=("Segoe UI", 10)).pack(side="left", padx=(0, 8))
         tk.Button(test, text="STAND UP", width=11,
@@ -609,7 +673,11 @@ class StandUpApp:
                   command=lambda: self._show_popup("sit", preview=True)).pack(side="left", padx=3)
 
         tk.Button(win, text="Save", width=12, command=save).grid(
-            row=8, column=0, columnspan=2, pady=12)
+            row=10, column=0, columnspan=2, pady=12)
+
+        win.update_idletasks()
+        self._place_bottom_right(win, win.winfo_reqwidth() + 16,
+                                 win.winfo_reqheight() + 16)
 
     # ----------------------------------------------------------- quotes mgr
     def open_quotes_manager(self):
@@ -782,6 +850,100 @@ def set_autostart(enable):
             return True, "Auto-start disabled."
     except Exception as exc:
         return False, "Could not change auto-start: %s" % exc
+
+
+# --------------------------------------------------------------------------- #
+# "Am I actually at my desk and working?" detectors (Windows, stdlib only).
+# Each returns False on non-Windows / on any error, so the timer never pauses
+# by mistake.
+# --------------------------------------------------------------------------- #
+AWAY_IDLE_SECONDS = 120          # treat this much no-input as "away / screen asleep"
+
+
+def _is_workstation_locked():
+    """True when the session is locked (or on the secure desktop)."""
+    if platform.system() != "Windows":
+        return False
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        user32.OpenInputDesktop.restype = ctypes.c_void_p
+        user32.OpenInputDesktop.argtypes = [ctypes.c_uint, ctypes.c_int, ctypes.c_uint]
+        DESKTOP_SWITCHDESKTOP = 0x0100
+        h = user32.OpenInputDesktop(0, False, DESKTOP_SWITCHDESKTOP)
+        if not h:
+            return True          # can't open the input desktop -> locked
+        user32.CloseDesktop.argtypes = [ctypes.c_void_p]
+        user32.CloseDesktop(h)
+        return False
+    except Exception:
+        return False
+
+
+def _idle_seconds():
+    """Seconds since the last keyboard/mouse input."""
+    if platform.system() != "Windows":
+        return 0.0
+    try:
+        import ctypes
+
+        class LII(ctypes.Structure):
+            _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
+
+        lii = LII()
+        lii.cbSize = ctypes.sizeof(LII)
+        if ctypes.windll.user32.GetLastInputInfo(ctypes.byref(lii)):
+            kernel32 = ctypes.windll.kernel32
+            kernel32.GetTickCount.restype = ctypes.c_uint32
+            tick = kernel32.GetTickCount()
+            return ((tick - lii.dwTime) & 0xFFFFFFFF) / 1000.0
+    except Exception:
+        pass
+    return 0.0
+
+
+def _scan_consent_key(key):
+    """Recursively look for any app whose LastUsedTimeStop == 0 (in use NOW)."""
+    i = 0
+    while True:
+        try:
+            sub = winreg.EnumKey(key, i)
+        except OSError:
+            break
+        i += 1
+        try:
+            with winreg.OpenKey(key, sub) as sk:
+                if sub.lower() == "nonpackaged":
+                    if _scan_consent_key(sk):
+                        return True
+                else:
+                    try:
+                        val, _ = winreg.QueryValueEx(sk, "LastUsedTimeStop")
+                        if val == 0:
+                            return True
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+    return False
+
+
+def _capability_in_use(capability):
+    """True if any app is currently using the given device (microphone/webcam)."""
+    if not HAS_WINREG or platform.system() != "Windows":
+        return False
+    base = (r"SOFTWARE\Microsoft\Windows\CurrentVersion"
+            r"\CapabilityAccessManager\ConsentStore" + "\\" + capability)
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, base) as key:
+            return _scan_consent_key(key)
+    except OSError:
+        return False
+
+
+def _in_call():
+    """A meeting/call is on if the mic or camera is actively in use."""
+    return _capability_in_use("microphone") or _capability_in_use("webcam")
 
 
 # --------------------------------------------------------------------------- #

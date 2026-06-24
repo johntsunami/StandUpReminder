@@ -73,6 +73,24 @@ that click starts the next phase's countdown.
   off (turning it off in Settings removes it). `install.py` also enables it via
   `enable_autostart()` so it's on even before the first launch.
 - **Window icon:** `_build_ui` calls `iconbitmap("standup.ico")` if present.
+- **Auto-pause:** `_should_pause()` (checked every tick) returns a reason string
+  when the timer should hold; `_tick` skips the decrement while it's set and the
+  status shows "Paused — <reason>". Detectors (module-level, all stdlib, all
+  Windows-only and fail-safe to False):
+  - `_is_workstation_locked()` — `OpenInputDesktop` returns NULL when locked.
+  - `_idle_seconds()` — `GetLastInputInfo`; `>= AWAY_IDLE_SECONDS` (120) = away /
+    screen asleep.
+  - `_in_call()` — reads `HKCU\...\CapabilityAccessManager\ConsentStore\
+    {microphone,webcam}` (incl. `NonPackaged`); any app with `LastUsedTimeStop == 0`
+    means the device is in use right now (covers Teams/Zoom/etc.).
+  Toggles: `pause_when_away`, `pause_in_call` (both default True). Note: when the
+  PC fully sleeps the process is suspended, so the timer pauses naturally.
+- **Warm-up:** `startup_delay_minutes` (default 30). On launch `in_warmup` is set
+  and `remaining` is the delay; when it elapses, `_tick` switches to a normal sit
+  cycle WITHOUT a popup. `reset()`/`skip()` end the warm-up immediately.
+- **Window placement:** `_place_bottom_right()` puts the control window and the
+  Settings dialog in the lower-right corner (above the taskbar). The big STAND
+  UP / SIT DOWN popup is still full-screen/centered.
 
 ## How to run & test
 

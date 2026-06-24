@@ -60,11 +60,21 @@ popup is showing** — so nothing piles up if you step away from your desk.
 
 - **Sit time** before STAND UP (default **45 min**)
 - **Stand time** before SIT DOWN (default **5 min**)
-- **Sound** on/off, **popup transparency**, keep the control window on top
+- **Start timer this long after launch** (default **30 min**) — a grace period
+  after you turn the computer on before the cycle begins.
+- **Pause when locked / screen asleep** (default ON) — the timer holds while your
+  workstation is locked, the screen is asleep, or you've been away from the
+  keyboard for a couple of minutes, so a break never counts while you're not there.
+- **Pause during calls** (default ON) — the timer holds whenever your microphone
+  or camera is in use (Teams, Zoom, etc.), so it won't tell you to move mid-meeting.
+- **Sound** on/off, **popup transparency**, keep the control window on top.
 - **Start automatically at login** — **ON by default** (per-user, no admin rights
   needed). Uncheck it here if you ever want to disable it on a particular machine.
 - **Test popup** buttons — press them to preview STAND UP / SIT DOWN as many
-  times as you like, without affecting your real timer
+  times as you like, without affecting your real timer.
+
+The small control window and the Settings window open in the **lower-right corner**
+of the screen.
 
 ### Quotes (menu → Quotes)
 
