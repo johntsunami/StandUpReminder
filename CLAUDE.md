@@ -97,6 +97,15 @@ that click starts the next phase's countdown.
 - **Window placement:** `_place_bottom_right()` puts the control window and the
   Settings dialog in the lower-right corner (above the taskbar). The big STAND
   UP / SIT DOWN popup is still full-screen/centered.
+- **Theme:** module-level `COL_*` palette + `FONT_UI`. `_mkbutton()` makes flat
+  buttons with a hover highlight; reuse it for new buttons. Main window has a
+  state-colored `accent_bar` and a status "card"; `_refresh_display` recolors them
+  (blue=sitting, green=standing, peach=warm-up, muted=paused). ttk Combobox is
+  themed via `clam` + `option_add` in `_build_ui`.
+- **Single-instance dialogs:** Settings and Quotes are tracked in
+  `self._settings_win` / `self._quotes_win`. `_raise_if_open(attr)` surfaces an
+  existing one instead of opening a duplicate; each dialog's `close()` clears its
+  ref (used by the window-close button, Save, and Cancel).
 
 ## How to run & test
 

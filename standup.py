@@ -48,6 +48,19 @@ CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 STAND_FILE = os.path.join(CONFIG_DIR, "stand_quotes.json")
 SIT_FILE = os.path.join(CONFIG_DIR, "sit_quotes.json")
 
+# --- UI palette (a soft dark "Catppuccin"-ish theme) ----------------------- #
+FONT_UI = "Segoe UI"
+COL_BG = "#1e1e2e"        # window background
+COL_PANEL = "#181825"     # header strips
+COL_CARD = "#2a2b3d"      # raised cards / inputs
+COL_FG = "#cdd6f4"        # primary text
+COL_MUTED = "#8c92b8"     # secondary text
+COL_GREEN = "#a6e3a1"     # standing / save
+COL_BLUE = "#89b4fa"      # sitting
+COL_PEACH = "#fab387"     # warming up
+COL_BTN = "#313244"       # button base
+COL_BTN_HI = "#45475a"    # button hover
+
 DEFAULT_CONFIG = {
     "sit_minutes": 45,        # how long you sit before STAND UP fires
     "stand_minutes": 5,       # how long you stand before SIT DOWN fires
@@ -304,6 +317,8 @@ class StandUpApp:
         self.pause_reason = None                # set when locked / away / in a call
         self.away_seconds = 0                   # how long we've been locked/away
         self.last_tick = time.monotonic()       # to detect PC sleep (big time gaps)
+        self._settings_win = None               # single-instance dialogs
+        self._quotes_win = None
 
         self._roll_stats_day()
         self._build_ui()
@@ -336,9 +351,24 @@ class StandUpApp:
                 self.root.iconbitmap(_ico)
         except Exception:
             pass
-        self.root.minsize(280, 140)
-        self._place_bottom_right(self.root, 300, 165)
-        self.root.configure(bg="#1e1e2e")
+        self.root.minsize(300, 200)
+        self._place_bottom_right(self.root, 320, 220)
+        self.root.configure(bg=COL_BG)
+
+        # Dark theming for ttk widgets (the Quote Manager combo box).
+        style = ttk.Style()
+        try:
+            style.theme_use("clam")
+        except Exception:
+            pass
+        style.configure("TCombobox", fieldbackground=COL_CARD, background=COL_BTN,
+                        foreground=COL_FG, arrowcolor=COL_FG, bordercolor=COL_BTN,
+                        lightcolor=COL_BTN, darkcolor=COL_BTN, relief="flat")
+        style.map("TCombobox", fieldbackground=[("readonly", COL_CARD)],
+                  foreground=[("readonly", COL_FG)])
+        self.root.option_add("*TCombobox*Listbox.background", COL_CARD)
+        self.root.option_add("*TCombobox*Listbox.foreground", COL_FG)
+        self.root.option_add("*TCombobox*Listbox.selectBackground", COL_BTN_HI)
 
         # Menu bar
         menubar = tk.Menu(self.root)
@@ -347,27 +377,63 @@ class StandUpApp:
         menubar.add_command(label="Help", command=self.show_help)
         self.root.config(menu=menubar)
 
-        wrap = tk.Frame(self.root, bg="#1e1e2e")
-        wrap.pack(fill="both", expand=True, padx=12, pady=10)
-
         self.status_var = tk.StringVar()
         self.stats_var = tk.StringVar()
 
-        tk.Label(wrap, textvariable=self.status_var, font=("Segoe UI", 15, "bold"),
-                 fg="#cdd6f4", bg="#1e1e2e").pack(pady=(8, 10))
+        # Top accent strip -- recolors to match the current state.
+        self.accent_bar = tk.Frame(self.root, bg=COL_BLUE, height=4)
+        self.accent_bar.pack(fill="x", side="top")
 
-        btns = tk.Frame(wrap, bg="#1e1e2e")
-        btns.pack()
-        self.start_btn = tk.Button(btns, text="Pause", width=8, command=self.toggle_running)
-        self.start_btn.grid(row=0, column=0, padx=3)
-        tk.Button(btns, text="Reset", width=8, command=self.reset).grid(row=0, column=1, padx=3)
-        tk.Button(btns, text="Skip", width=8, command=self.skip).grid(row=0, column=2, padx=3)
+        wrap = tk.Frame(self.root, bg=COL_BG)
+        wrap.pack(fill="both", expand=True, padx=16, pady=(12, 14))
 
-        tk.Label(wrap, textvariable=self.stats_var, font=("Segoe UI", 9),
-                 fg="#9399b2", bg="#1e1e2e").pack(pady=(8, 0))
+        tk.Label(wrap, text="🪑  StandUp Reminder", font=(FONT_UI, 10, "bold"),
+                 fg=COL_MUTED, bg=COL_BG).pack(anchor="w")
+
+        # Status "card"
+        card = tk.Frame(wrap, bg=COL_CARD)
+        card.pack(fill="x", pady=(10, 12))
+        self.status_lbl = tk.Label(card, textvariable=self.status_var,
+                                   font=(FONT_UI, 18, "bold"), fg=COL_BLUE, bg=COL_CARD)
+        self.status_lbl.pack(pady=(12, 2))
+        tk.Label(card, textvariable=self.stats_var, font=(FONT_UI, 9),
+                 fg=COL_MUTED, bg=COL_CARD).pack(pady=(0, 10))
+
+        # Control buttons (evenly stretched)
+        btns = tk.Frame(wrap, bg=COL_BG)
+        btns.pack(fill="x")
+        self.start_btn = self._mkbutton(btns, "Pause", self.toggle_running)
+        self.start_btn.pack(side="left", expand=True, fill="x", padx=(0, 4))
+        self._mkbutton(btns, "Reset", self.reset).pack(side="left", expand=True, fill="x", padx=4)
+        self._mkbutton(btns, "Skip", self.skip).pack(side="left", expand=True, fill="x", padx=(4, 0))
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self._refresh_display()
+
+    def _mkbutton(self, parent, text, command, bg=COL_BTN, hover=COL_BTN_HI,
+                  fg=COL_FG, width=8, font=None):
+        """A flat, padded button with a hover highlight."""
+        b = tk.Button(parent, text=text, command=command, width=width,
+                      bg=bg, fg=fg, activebackground=hover, activeforeground=fg,
+                      relief="flat", bd=0, highlightthickness=0, cursor="hand2",
+                      font=font or (FONT_UI, 10, "bold"), padx=8, pady=7)
+        b.bind("<Enter>", lambda e: b.config(bg=hover))
+        b.bind("<Leave>", lambda e: b.config(bg=bg))
+        return b
+
+    def _raise_if_open(self, attr):
+        """If a tracked dialog is already open, surface it and return True."""
+        w = getattr(self, attr, None)
+        if w is not None:
+            try:
+                if w.winfo_exists():
+                    w.deiconify()
+                    w.lift()
+                    w.focus_force()
+                    return True
+            except Exception:
+                pass
+        return False
 
     def _place_bottom_right(self, win, w, h, margin=24, taskbar=56):
         """Position a window in the lower-right corner, above the taskbar."""
@@ -454,16 +520,23 @@ class StandUpApp:
     def _refresh_display(self):
         # No countdown is shown on purpose -- just the current state, in words.
         if not self.running:
-            state = "Paused"
+            state, color = "Paused", COL_MUTED
         elif self.pause_reason:
-            state = "Paused — %s" % self.pause_reason
+            state, color = "Paused — %s" % self.pause_reason, COL_MUTED
         elif self.in_warmup:
-            state = "Getting started…"
+            state, color = "Getting started…", COL_PEACH
+        elif self.mode == "stand":
+            state, color = "Standing", COL_GREEN
         else:
-            state = "Standing" if self.mode == "stand" else "Sitting"
+            state, color = "Sitting", COL_BLUE
         self.status_var.set(state)
+        try:
+            self.status_lbl.config(fg=color)
+            self.accent_bar.config(bg=color)
+        except Exception:
+            pass
         self.start_btn.config(text="Start" if not self.running else "Pause")
-        self.stats_var.set("Stand breaks today: %d" % self.config["stats"].get("stands", 0))
+        self.stats_var.set("✔  %d stand breaks today" % self.config["stats"].get("stands", 0))
 
     # ----------------------------------------------------------- controls
     def toggle_running(self):
@@ -624,13 +697,30 @@ class StandUpApp:
 
     # ----------------------------------------------------------- settings
     def open_settings(self):
+        if self._raise_if_open("_settings_win"):
+            return
         win = tk.Toplevel(self.root)
+        self._settings_win = win
         win.title("Settings")
-        win.configure(bg="#1e1e2e")
+        win.configure(bg=COL_BG)
         win.resizable(False, False)
         win.transient(self.root)
 
-        pad = {"padx": 10, "pady": 5}
+        def close():
+            self._settings_win = None
+            win.destroy()
+        win.protocol("WM_DELETE_WINDOW", close)
+
+        # Header strip
+        head = tk.Frame(win, bg=COL_PANEL)
+        head.pack(fill="x")
+        tk.Label(head, text="⚙  Settings", font=(FONT_UI, 13, "bold"),
+                 fg=COL_FG, bg=COL_PANEL).pack(anchor="w", padx=16, pady=10)
+        tk.Frame(win, bg=COL_BLUE, height=3).pack(fill="x")
+
+        body = tk.Frame(win, bg=COL_BG)
+        body.pack(fill="both", expand=True, padx=16, pady=12)
+
         sit_v = tk.IntVar(value=self.config["sit_minutes"])
         stand_v = tk.IntVar(value=self.config["stand_minutes"])
         delay_v = tk.IntVar(value=self.config.get("startup_delay_minutes", 30))
@@ -643,31 +733,37 @@ class StandUpApp:
         trans_v = tk.DoubleVar(value=self.config["transparency"])
 
         def row(r, text, widget):
-            tk.Label(win, text=text, fg="#cdd6f4", bg="#1e1e2e",
-                     font=("Segoe UI", 10)).grid(row=r, column=0, sticky="w", **pad)
-            widget.grid(row=r, column=1, sticky="w", **pad)
+            tk.Label(body, text=text, fg=COL_FG, bg=COL_BG, font=(FONT_UI, 10)).grid(
+                row=r, column=0, sticky="w", padx=(0, 14), pady=5)
+            widget.grid(row=r, column=1, sticky="e", pady=5)
+
+        def spin(var, lo, hi):
+            return tk.Spinbox(body, from_=lo, to=hi, textvariable=var, width=6,
+                              bg=COL_CARD, fg=COL_FG, buttonbackground=COL_BTN,
+                              insertbackground=COL_FG, relief="flat", justify="center",
+                              highlightthickness=1, highlightbackground=COL_BTN,
+                              highlightcolor=COL_BLUE)
 
         def check(var):
-            return tk.Checkbutton(win, variable=var, bg="#1e1e2e",
-                                  activebackground="#1e1e2e", selectcolor="#313244")
+            return tk.Checkbutton(body, variable=var, bg=COL_BG, fg=COL_FG,
+                                  activebackground=COL_BG, selectcolor=COL_CARD,
+                                  highlightthickness=0, bd=0)
 
-        row(0, "Sit time before STAND UP (min)",
-            tk.Spinbox(win, from_=1, to=240, textvariable=sit_v, width=6))
-        row(1, "Stand time before SIT DOWN (min)",
-            tk.Spinbox(win, from_=1, to=120, textvariable=stand_v, width=6))
-        row(2, "Start timer this long after launch (min)",
-            tk.Spinbox(win, from_=0, to=240, textvariable=delay_v, width=6))
-        row(3, "Popup transparency",
-            tk.Scale(win, from_=0.5, to=1.0, resolution=0.05, orient="horizontal",
-                     variable=trans_v, length=150, bg="#1e1e2e", fg="#cdd6f4",
-                     highlightthickness=0))
-        row(4, "Play sound on popup", check(sound_v))
-        row(5, "Pause when locked / screen asleep", check(away_v))
-        row(6, "Pause during calls (mic or camera in use)", check(call_v))
-        row(7, "Restart cycle if away/locked over (min)",
-            tk.Spinbox(win, from_=1, to=240, textvariable=reset_v, width=6))
+        row(0, "Sit time before STAND UP (min)", spin(sit_v, 1, 240))
+        row(1, "Stand time before SIT DOWN (min)", spin(stand_v, 1, 120))
+        row(2, "Start timer this long after launch (min)", spin(delay_v, 0, 240))
+        row(3, "Restart cycle if away/locked over (min)", spin(reset_v, 1, 240))
+        row(4, "Popup transparency",
+            tk.Scale(body, from_=0.5, to=1.0, resolution=0.05, orient="horizontal",
+                     variable=trans_v, length=140, bg=COL_BG, fg=COL_MUTED,
+                     troughcolor=COL_CARD, activebackground=COL_GREEN,
+                     highlightthickness=0, bd=0))
+        row(5, "Play sound on popup", check(sound_v))
+        row(6, "Pause when locked / screen asleep", check(away_v))
+        row(7, "Pause during calls (mic or camera in use)", check(call_v))
         row(8, "Keep control window on top", check(topmost_v))
         row(9, "Start automatically at login", check(auto_v))
+        body.grid_columnconfigure(0, weight=1)
 
         def save():
             self.config["sit_minutes"] = max(1, int(sit_v.get()))
@@ -694,20 +790,24 @@ class StandUpApp:
             if not self.in_warmup:
                 self.remaining = min(self.remaining, self.duration_for(self.mode))
             self._refresh_display()
-            win.destroy()
+            close()
 
-        # --- live preview: press as many times as you like to test popups ----
-        test = tk.Frame(win, bg="#1e1e2e")
-        test.grid(row=10, column=0, columnspan=2, pady=(12, 0))
-        tk.Label(test, text="Test popup:", fg="#cdd6f4", bg="#1e1e2e",
-                 font=("Segoe UI", 10)).pack(side="left", padx=(0, 8))
-        tk.Button(test, text="STAND UP", width=11,
-                  command=lambda: self._show_popup("stand", preview=True)).pack(side="left", padx=3)
-        tk.Button(test, text="SIT DOWN", width=11,
-                  command=lambda: self._show_popup("sit", preview=True)).pack(side="left", padx=3)
+        # Live preview: press as many times as you like to test popups.
+        test = tk.Frame(body, bg=COL_BG)
+        test.grid(row=10, column=0, columnspan=2, pady=(14, 0), sticky="w")
+        tk.Label(test, text="Test popup:", fg=COL_MUTED, bg=COL_BG,
+                 font=(FONT_UI, 10)).pack(side="left", padx=(0, 8))
+        self._mkbutton(test, "STAND UP", lambda: self._show_popup("stand", preview=True),
+                       bg="#2d4a36", hover="#3a5e45", width=10).pack(side="left", padx=3)
+        self._mkbutton(test, "SIT DOWN", lambda: self._show_popup("sit", preview=True),
+                       bg="#2c3a52", hover="#384a66", width=10).pack(side="left", padx=3)
 
-        tk.Button(win, text="Save", width=12, command=save).grid(
-            row=11, column=0, columnspan=2, pady=12)
+        # Footer with Save / Cancel
+        foot = tk.Frame(win, bg=COL_BG)
+        foot.pack(fill="x", padx=16, pady=(0, 14))
+        self._mkbutton(foot, "Save", save, bg=COL_GREEN, hover="#b6f0b0",
+                       fg="#10331b", width=12).pack(side="right")
+        self._mkbutton(foot, "Cancel", close, width=10).pack(side="right", padx=(0, 8))
 
         win.update_idletasks()
         self._place_bottom_right(win, win.winfo_reqwidth() + 16,
@@ -715,32 +815,47 @@ class StandUpApp:
 
     # ----------------------------------------------------------- quotes mgr
     def open_quotes_manager(self):
+        if self._raise_if_open("_quotes_win"):
+            return
         win = tk.Toplevel(self.root)
+        self._quotes_win = win
         win.title("Quote Manager")
-        win.configure(bg="#1e1e2e")
-        win.geometry("560x440")
+        win.configure(bg=COL_BG)
+        win.geometry("580x470")
         win.transient(self.root)
 
-        top_bar = tk.Frame(win, bg="#1e1e2e")
-        top_bar.pack(fill="x", padx=10, pady=8)
-        tk.Label(top_bar, text="Editing:", fg="#cdd6f4", bg="#1e1e2e",
-                 font=("Segoe UI", 10)).pack(side="left")
+        def close():
+            self._quotes_win = None
+            win.destroy()
+        win.protocol("WM_DELETE_WINDOW", close)
+
+        head = tk.Frame(win, bg=COL_PANEL)
+        head.pack(fill="x")
+        tk.Label(head, text="💬  Quote Manager", font=(FONT_UI, 13, "bold"),
+                 fg=COL_FG, bg=COL_PANEL).pack(anchor="w", padx=16, pady=10)
+        tk.Frame(win, bg=COL_GREEN, height=3).pack(fill="x")
+
+        top_bar = tk.Frame(win, bg=COL_BG)
+        top_bar.pack(fill="x", padx=14, pady=10)
+        tk.Label(top_bar, text="Editing:", fg=COL_FG, bg=COL_BG,
+                 font=(FONT_UI, 10)).pack(side="left")
         which = tk.StringVar(value="STAND UP quotes")
         combo = ttk.Combobox(top_bar, textvariable=which, state="readonly", width=20,
                              values=["STAND UP quotes", "SIT DOWN quotes"])
         combo.pack(side="left", padx=8)
 
         count_var = tk.StringVar()
-        tk.Label(top_bar, textvariable=count_var, fg="#9399b2", bg="#1e1e2e",
-                 font=("Segoe UI", 9)).pack(side="right")
+        tk.Label(top_bar, textvariable=count_var, fg=COL_MUTED, bg=COL_BG,
+                 font=(FONT_UI, 9)).pack(side="right")
 
-        list_frame = tk.Frame(win, bg="#1e1e2e")
-        list_frame.pack(fill="both", expand=True, padx=10)
+        list_frame = tk.Frame(win, bg=COL_BG)
+        list_frame.pack(fill="both", expand=True, padx=14)
         scroll = tk.Scrollbar(list_frame)
         scroll.pack(side="right", fill="y")
-        lb = tk.Listbox(list_frame, yscrollcommand=scroll.set, font=("Segoe UI", 10),
-                        bg="#11111b", fg="#cdd6f4", selectbackground="#585b70",
-                        activestyle="none")
+        lb = tk.Listbox(list_frame, yscrollcommand=scroll.set, font=(FONT_UI, 10),
+                        bg="#11111b", fg=COL_FG, selectbackground=COL_BTN_HI,
+                        relief="flat", highlightthickness=1, highlightbackground=COL_BTN,
+                        activestyle="none", bd=0)
         lb.pack(side="left", fill="both", expand=True)
         scroll.config(command=lb.yview)
 
@@ -826,12 +941,14 @@ class StandUpApp:
                     self.sit_quotes = list(DEFAULT_SIT_QUOTES)
                 persist()
 
-        btns = tk.Frame(win, bg="#1e1e2e")
-        btns.pack(fill="x", padx=10, pady=10)
-        for txt, cmd in [("Add", add_quote), ("Delete", delete_selected),
-                         ("Import", import_quotes), ("Export", export_quotes),
-                         ("Restore defaults", restore_defaults)]:
-            tk.Button(btns, text=txt, command=cmd, width=14).pack(side="left", padx=3)
+        btns = tk.Frame(win, bg=COL_BG)
+        btns.pack(fill="x", padx=14, pady=12)
+        self._mkbutton(btns, "Add", add_quote, bg=COL_GREEN, hover="#b6f0b0",
+                       fg="#10331b", width=8).pack(side="left", padx=(0, 4))
+        for txt, cmd in [("Delete", delete_selected), ("Import", import_quotes),
+                         ("Export", export_quotes), ("Restore defaults", restore_defaults)]:
+            self._mkbutton(btns, txt, cmd, width=12).pack(side="left", padx=4)
+        self._mkbutton(btns, "Close", close, width=8).pack(side="right")
 
         combo.bind("<<ComboboxSelected>>", lambda e: reload_list())
         reload_list()
@@ -841,12 +958,15 @@ class StandUpApp:
         messagebox.showinfo(
             APP_NAME,
             "StandUp Reminder\n\n"
-            "- Sit timer counts down; when it hits zero a STAND UP popup appears.\n"
-            "- After your standing break, a SIT DOWN popup appears.\n"
-            "- Click 'I'm Standing/Sitting' to start the next phase, or Snooze.\n"
-            "- 'Delete quote' removes the shown line; 'New quote' shuffles it.\n\n"
-            "Settings: adjust sit/stand/snooze times, sound, transparency, autostart.\n"
-            "Quotes: add, delete, import (.txt one per line), or export your own.\n\n"
+            "- The sit timer runs; when it ends, a STAND UP message floats on\n"
+            "  screen. After your standing break, a SIT DOWN message appears.\n"
+            "- On the popup: click the words or press Esc to confirm (this starts\n"
+            "  the next timer). Right-click or press D to skip a quote you dislike.\n"
+            "- The timer pauses while you're locked, away, or in a call, and\n"
+            "  restarts with STAND UP if you were away a long time.\n\n"
+            "Settings: sit/stand times, startup delay, pauses, sound, transparency,\n"
+            "auto-start, and Test-popup buttons.\n"
+            "Quotes: add, delete, import (.txt one per line / .json), or export.\n\n"
             "Quotes & settings are stored in:\n" + CONFIG_DIR,
             parent=self.root)
 
